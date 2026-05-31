@@ -1,11 +1,12 @@
 """
-ai.py — Nova AI using Gemini (free tier)
+ai.py — Nova AI using Google Gemini (new google-genai SDK)
 Get your free key at: https://aistudio.google.com/app/apikey
 """
 
 import os
 import re
-import google.generativeai as genai
+from google import genai
+from google.genai import types
 
 # ==================================================
 # LOAD .ENV (for local dev — Render uses env vars)
@@ -23,17 +24,25 @@ def load_env():
 
 load_env()
 
-genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
-
-model = genai.GenerativeModel(
-    model_name="gemini-2.0-flash",   # free, fast
-    system_instruction="""You are Nova, a smart helpful AI voice assistant.
-Keep responses short — maximum 2 to 4 sentences.
-Speak naturally. No markdown. Friendly and confident."""
-)
+client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
 
 # ==================================================
-# IMAGE GENERATION — disabled without OpenAI
+# SYSTEM PROMPT
+# ==================================================
+
+SYSTEM_PROMPT = """
+You are Nova, a smart helpful AI voice assistant.
+
+Rules:
+Keep responses short.
+Maximum 2 to 4 sentences.
+Speak naturally.
+No markdown.
+Friendly and confident.
+"""
+
+# ==================================================
+# IMAGE GENERATION — disabled
 # ==================================================
 
 DRAW_TRIGGERS = [
@@ -57,19 +66,39 @@ def ask_nova(prompt, conversation_history=None):
         if is_draw_request(prompt):
             return generate_image(prompt)
 
-        # Build Gemini-format history
-        history = []
+        # Build contents list from conversation history
+        contents = []
+
         if conversation_history:
             for msg in conversation_history:
                 role = "user" if msg["role"] == "user" else "model"
-                history.append({"role": role, "parts": [msg["content"]]})
+                contents.append(
+                    types.Content(
+                        role=role,
+                        parts=[types.Part(text=msg["content"])]
+                    )
+                )
 
-        chat = model.start_chat(history=history)
-        response = chat.send_message(prompt)
+        # Add current user message
+        contents.append(
+            types.Content(
+                role="user",
+                parts=[types.Part(text=prompt)]
+            )
+        )
 
-        reply = response.text
+        response = client.models.generate_content(
+            model="gemini-2.0-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_PROMPT,
+                max_output_tokens=300,
+            ),
+        )
 
-        # Strip markdown (voice doesn't need it)
+        reply = response.text or ""
+
+        # Strip markdown formatting (voice doesn't need it)
         reply = re.sub(r"[*_`#]", "", reply)
         reply = re.sub(r"\n+", " ", reply)
 
