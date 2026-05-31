@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: nova-backend
+    runtime: python
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn server:app
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+      - key: WEATHER_KEY
+        sync: false
+      - key: NEWS_KEY
+        sync: false
+      - key: TMDB_KEY
+        sync: false
