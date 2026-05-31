@@ -1,17 +1,14 @@
 """
-ai.py — Nova AI using Google Gemini (new google-genai SDK)
-Get your free key at: https://aistudio.google.com/app/apikey
+ai.py — Nova AI using Grok (xAI)
+Get your free key at: https://console.x.ai
 """
-
 import os
 import re
-from google import genai
-from google.genai import types
+import requests
 
 # ==================================================
 # LOAD .ENV (for local dev — Render uses env vars)
 # ==================================================
-
 def load_env():
     env_path = os.path.join(os.path.dirname(__file__), ".env")
     if os.path.exists(env_path):
@@ -21,18 +18,15 @@ def load_env():
                 if "=" in line and not line.startswith("#"):
                     key, _, val = line.partition("=")
                     os.environ[key.strip()] = val.strip()
-
 load_env()
 
-client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+XAI_API_KEY = os.getenv("XAI_API_KEY")
 
 # ==================================================
 # SYSTEM PROMPT
 # ==================================================
-
 SYSTEM_PROMPT = """
 You are Nova, a smart helpful AI voice assistant.
-
 Rules:
 Keep responses short.
 Maximum 2 to 4 sentences.
@@ -44,7 +38,6 @@ Friendly and confident.
 # ==================================================
 # IMAGE GENERATION — disabled
 # ==================================================
-
 DRAW_TRIGGERS = [
     "draw", "generate image", "create image",
     "make image", "paint", "sketch", "illustrate",
@@ -60,59 +53,52 @@ def generate_image(command):
 # ==================================================
 # MAIN CHAT FUNCTION
 # ==================================================
-
 def ask_nova(prompt, conversation_history=None):
     try:
         if is_draw_request(prompt):
             return generate_image(prompt)
 
-        # Build contents list from conversation history
-        contents = []
+        # Build messages list
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
         if conversation_history:
             for msg in conversation_history:
-                role = "user" if msg["role"] == "user" else "model"
-                contents.append(
-                    types.Content(
-                        role=role,
-                        parts=[types.Part(text=msg["content"])]
-                    )
-                )
+                messages.append({
+                    "role": msg["role"],  # "user" or "assistant"
+                    "content": msg["content"]
+                })
 
         # Add current user message
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[types.Part(text=prompt)]
-            )
+        messages.append({"role": "user", "content": prompt})
+
+        response = requests.post(
+            "https://api.x.ai/v1/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {XAI_API_KEY}"
+            },
+            json={
+                "model": "grok-3-mini",
+                "messages": messages,
+                "max_tokens": 300
+            }
         )
 
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                max_output_tokens=300,
-            ),
-        )
-
-        reply = response.text or ""
+        data = response.json()
+        reply = data["choices"][0]["message"]["content"] or ""
 
         # Strip markdown formatting (voice doesn't need it)
         reply = re.sub(r"[*_`#]", "", reply)
         reply = re.sub(r"\n+", " ", reply)
-
         return reply.strip()
 
     except Exception as e:
         print(f"[AI Error] {type(e).__name__}: {e}")
         return "Sorry, something went wrong."
 
-
 # ==================================================
 # TEST MODE
 # ==================================================
-
 if __name__ == "__main__":
     print("\nNova started. Type 'exit' to quit.\n")
     while True:
