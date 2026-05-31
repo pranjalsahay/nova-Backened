@@ -1,11 +1,10 @@
 """
-ai.py — Nova AI using Google Gemini (new google-genai SDK)
-Get your free key at: https://aistudio.google.com/app/apikey
+ai.py — Nova AI using Groq (Free)
+Get your free key at: https://console.groq.com
 """
 import os
 import re
-from google import genai
-from google.genai import types
+import requests
 
 # ==================================================
 # LOAD .ENV (for local dev — Render uses env vars)
@@ -21,12 +20,10 @@ def load_env():
                     os.environ[key.strip()] = val.strip()
 load_env()
 
-GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 
-if not GEMINI_API_KEY:
-    print("[AI Error] GEMINI_API_KEY is not set!")
-
-client = genai.Client(api_key=GEMINI_API_KEY)
+if not GROQ_API_KEY:
+    print("[AI Error] GROQ_API_KEY is not set!")
 
 # ==================================================
 # SYSTEM PROMPT
@@ -64,41 +61,58 @@ def ask_nova(prompt, conversation_history=None):
         if is_draw_request(prompt):
             return generate_image(prompt)
 
-        # Build contents list from conversation history
-        contents = []
+        if not GROQ_API_KEY:
+            return "Sorry, my API key is missing. Please check the server configuration."
+
+        # Build messages list
+        messages = [{"role": "system", "content": SYSTEM_PROMPT}]
+
         if conversation_history:
             for msg in conversation_history:
-                role = "user" if msg["role"] == "user" else "model"
-                contents.append(
-                    types.Content(
-                        role=role,
-                        parts=[types.Part(text=msg["content"])]
-                    )
-                )
+                messages.append({
+                    "role": msg["role"],
+                    "content": msg["content"]
+                })
 
-        # Add current user message
-        contents.append(
-            types.Content(
-                role="user",
-                parts=[types.Part(text=prompt)]
-            )
+        messages.append({"role": "user", "content": prompt})
+
+        response = requests.post(
+            "https://api.groq.com/openai/v1/chat/completions",
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {GROQ_API_KEY}"
+            },
+            json={
+                "model": "llama-3.3-70b-versatile",
+                "messages": messages,
+                "max_tokens": 300
+            },
+            timeout=15
         )
 
-        response = client.models.generate_content(
-            model="gemini-2.0-flash",
-            contents=contents,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_PROMPT,
-                max_output_tokens=300,
-            ),
-        )
+        data = response.json()
+        print(f"[Groq Status] {response.status_code}")
+        print(f"[Groq Response] {data}")
 
-        reply = response.text or ""
+        if response.status_code != 200:
+            error_msg = data.get("error", {}).get("message", "Unknown error")
+            print(f"[AI Error] Groq API error: {error_msg}")
+            return f"Sorry, I ran into an issue: {error_msg}"
 
-        # Strip markdown formatting (voice doesn't need it)
+        if "choices" not in data:
+            print(f"[AI Error] No choices in response: {data}")
+            return "Sorry, I got an unexpected response. Please try again."
+
+        reply = data["choices"][0]["message"]["content"] or ""
+
+        # Strip markdown formatting
         reply = re.sub(r"[*_`#]", "", reply)
         reply = re.sub(r"\n+", " ", reply)
         return reply.strip()
+
+    except requests.exceptions.Timeout:
+        print("[AI Error] Request timed out")
+        return "Sorry, I took too long to respond. Please try again."
 
     except Exception as e:
         print(f"[AI Error] {type(e).__name__}: {e}")
