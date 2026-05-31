@@ -1,6 +1,0 @@
-google-generativeai
-flask
-flask-cors
-gunicorn
-requests
-wikipedia
