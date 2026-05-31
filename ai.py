@@ -58,17 +58,20 @@ def ask_nova(prompt, conversation_history=None):
         if is_draw_request(prompt):
             return generate_image(prompt)
 
+        if not XAI_API_KEY:
+            print("[AI Error] XAI_API_KEY is not set!")
+            return "Sorry, my API key is missing. Please check the server configuration."
+
         # Build messages list
         messages = [{"role": "system", "content": SYSTEM_PROMPT}]
 
         if conversation_history:
             for msg in conversation_history:
                 messages.append({
-                    "role": msg["role"],  # "user" or "assistant"
+                    "role": msg["role"],
                     "content": msg["content"]
                 })
 
-        # Add current user message
         messages.append({"role": "user", "content": prompt})
 
         response = requests.post(
@@ -81,16 +84,39 @@ def ask_nova(prompt, conversation_history=None):
                 "model": "grok-3-mini",
                 "messages": messages,
                 "max_tokens": 300
-            }
+            },
+            timeout=15
         )
 
         data = response.json()
+
+        # Log full response for debugging
+        print(f"[Grok Status] {response.status_code}")
+        print(f"[Grok Response] {data}")
+
+        # Check for API error
+        if response.status_code != 200:
+            error_msg = data.get("error", {})
+            if isinstance(error_msg, dict):
+                error_msg = error_msg.get("message", "Unknown error")
+            print(f"[AI Error] Grok API error: {error_msg}")
+            return f"Sorry, I ran into an issue: {error_msg}"
+
+        # Check if choices exists
+        if "choices" not in data:
+            print(f"[AI Error] No choices in response: {data}")
+            return "Sorry, I got an unexpected response. Please try again."
+
         reply = data["choices"][0]["message"]["content"] or ""
 
-        # Strip markdown formatting (voice doesn't need it)
+        # Strip markdown formatting
         reply = re.sub(r"[*_`#]", "", reply)
         reply = re.sub(r"\n+", " ", reply)
         return reply.strip()
+
+    except requests.exceptions.Timeout:
+        print("[AI Error] Request timed out")
+        return "Sorry, I took too long to respond. Please try again."
 
     except Exception as e:
         print(f"[AI Error] {type(e).__name__}: {e}")
