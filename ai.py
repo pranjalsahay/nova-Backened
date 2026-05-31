@@ -26,7 +26,7 @@ load_env()
 genai.configure(api_key=os.getenv("GEMINI_API_KEY"))
 
 model = genai.GenerativeModel(
-    model_name="gemini-1.5-flash",   # free, fast
+    model_name="gemini-2.0-flash",   # free, fast
     system_instruction="""You are Nova, a smart helpful AI voice assistant.
 Keep responses short — maximum 2 to 4 sentences.
 Speak naturally. No markdown. Friendly and confident."""
