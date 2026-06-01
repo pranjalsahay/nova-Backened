@@ -36,7 +36,7 @@ def _open_app(win_cmd, mac_cmd, linux_cmd):
 
 
 # ==================================================
-# WEATHER
+# WEATHER — WeatherAPI.com
 # ==================================================
 WEATHER_TRIGGERS = ["weather", "temperature", "how hot", "how cold", "forecast"]
 
@@ -59,20 +59,21 @@ def get_weather(cmd):
 
     try:
         response = requests.get(
-            "https://api.openweathermap.org/data/2.5/weather",
-            params={"q": city, "appid": WEATHER_KEY, "units": "metric"},
+            "http://api.weatherapi.com/v1/current.json",
+            params={"key": WEATHER_KEY, "q": city, "aqi": "no"},
             timeout=10
         )
         data = response.json()
-        if response.status_code != 200:
-            return f"Sorry, I couldn't get the weather for {city}. {data.get('message', 'Unknown error')}."
 
-        name     = data["name"]
-        country  = data["sys"]["country"]
-        temp     = round(data["main"]["temp"])
-        feels    = round(data["main"]["feels_like"])
-        desc     = data["weather"][0]["description"].capitalize()
-        humidity = data["main"]["humidity"]
+        if "error" in data:
+            return f"Sorry, I couldn't get the weather for {city}. {data['error']['message']}."
+
+        name     = data["location"]["name"]
+        country  = data["location"]["country"]
+        temp     = round(data["current"]["temp_c"])
+        feels    = round(data["current"]["feelslike_c"])
+        desc     = data["current"]["condition"]["text"]
+        humidity = data["current"]["humidity"]
 
         return (
             f"The weather in {name}, {country} is {desc}. "
