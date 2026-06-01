@@ -322,9 +322,11 @@ def perform_action(command):
     cmd = command.lower().strip()
 
     # ─────────────────────────────────────────
-    # DATE & TIME
+    # DATE & TIME (checked first — before calculator/wiki)
     # ─────────────────────────────────────────
-    if any(t in cmd for t in DATETIME_TRIGGERS):
+    if any(t in cmd for t in DATETIME_TRIGGERS) and any(
+        w in cmd for w in ["time", "date", "day", "today", "year", "month", "clock"]
+    ):
         return get_datetime(cmd)
 
     # ─────────────────────────────────────────
