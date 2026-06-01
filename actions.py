@@ -1,11 +1,7 @@
 import os
 import sys
-import re
-import math
 import requests
 import webbrowser
-import wikipedia
-from datetime import datetime
 from urllib.parse import quote
 from memory import (
     save_personal_memory,
@@ -13,8 +9,6 @@ from memory import (
     get_all_memory
 )
 
-# vision.py uses screen capture (mss, cv2, pytesseract)
-# These won't work on a server — safely disabled
 try:
     from vision import read_screen_text, detect_error
     VISION_AVAILABLE = True
@@ -26,15 +20,13 @@ except Exception:
         return "Screen error detection is not available in server mode."
 
 # ==================================================
-# API KEYS (from environment — never hardcoded)
+# API KEYS
 # ==================================================
 WEATHER_KEY = os.getenv("WEATHER_KEY")
 NEWS_KEY    = os.getenv("NEWS_KEY")
-TMDB_KEY    = os.getenv("TMDB_KEY")
 
 
 def _open_app(win_cmd, mac_cmd, linux_cmd):
-    """Open native app cross-platform."""
     if sys.platform == "win32":
         os.system(win_cmd)
     elif sys.platform == "darwin":
@@ -150,216 +142,20 @@ def get_news(cmd):
 
 
 # ==================================================
-# WIKIPEDIA
-# ==================================================
-WIKI_TRIGGERS = ["what is ", "who is ", "tell me about ", "wikipedia ", "wiki "]
-
-def get_wikipedia(cmd):
-    query = None
-    for trigger in ["tell me about ", "wikipedia ", "wiki "]:
-        if trigger in cmd:
-            query = cmd.split(trigger, 1)[1].strip()
-            break
-    if not query:
-        # "what is X" / "who is X" — only use Wikipedia if not in memory
-        for trigger in ["what is ", "who is "]:
-            if cmd.startswith(trigger):
-                query = cmd.replace(trigger, "", 1).strip()
-                break
-    if not query:
-        return None
-
-    try:
-        wikipedia.set_lang("en")
-        summary = wikipedia.summary(query, sentences=2, auto_suggest=True)
-        # Strip markdown/brackets
-        summary = re.sub(r"\(.*?\)", "", summary).strip()
-        return summary
-    except wikipedia.exceptions.DisambiguationError as e:
-        return f"{query} could refer to many things. Try being more specific, like: {e.options[0]}."
-    except wikipedia.exceptions.PageError:
-        return f"I couldn't find a Wikipedia page for {query}."
-    except Exception as e:
-        print(f"[Wikipedia Error] {type(e).__name__}: {e}")
-        return "Sorry, I couldn't fetch that from Wikipedia right now."
-
-
-# ==================================================
-# TMDB — MOVIES & TV
-# ==================================================
-TMDB_TRIGGERS = ["movie", "film", "trending movies", "popular movies",
-                 "top movies", "recommend a movie", "what should i watch",
-                 "tv show", "series", "trending shows"]
-
-def get_tmdb(cmd):
-    if not TMDB_KEY:
-        return "Movie info is not available. The TMDB API key is missing."
-
-    base = "https://api.themoviedb.org/3"
-    params = {"api_key": TMDB_KEY, "language": "en-US"}
-
-    try:
-        # Search for a specific movie
-        for trigger in ["search movie ", "find movie ", "movie about ", "film about "]:
-            if trigger in cmd:
-                query = cmd.split(trigger, 1)[1].strip()
-                r = requests.get(f"{base}/search/movie",
-                                 params={**params, "query": query}, timeout=10)
-                results = r.json().get("results", [])
-                if not results:
-                    return f"I couldn't find a movie matching {query}."
-                m = results[0]
-                title   = m.get("title", "Unknown")
-                year    = m.get("release_date", "")[:4]
-                rating  = m.get("vote_average", 0)
-                overview = m.get("overview", "No description available.")
-                overview = overview[:120] + "..." if len(overview) > 120 else overview
-                return f"{title} ({year}) — Rated {rating}/10. {overview}"
-
-        # Trending movies
-        if any(t in cmd for t in ["trending movie", "popular movie", "top movie",
-                                   "what should i watch", "recommend a movie"]):
-            r = requests.get(f"{base}/trending/movie/week", params=params, timeout=10)
-            results = r.json().get("results", [])[:3]
-            if not results:
-                return "I couldn't find trending movies right now."
-            reply = "Here are the trending movies this week. "
-            for i, m in enumerate(results, 1):
-                reply += f"{i}. {m['title']} ({m.get('release_date','')[:4]}), rated {m.get('vote_average',0)}/10. "
-            return reply.strip()
-
-        # Trending TV shows
-        if any(t in cmd for t in ["trending show", "popular show", "tv show", "series"]):
-            r = requests.get(f"{base}/trending/tv/week", params=params, timeout=10)
-            results = r.json().get("results", [])[:3]
-            if not results:
-                return "I couldn't find trending shows right now."
-            reply = "Here are the trending TV shows this week. "
-            for i, s in enumerate(results, 1):
-                reply += f"{i}. {s['name']} ({s.get('first_air_date','')[:4]}), rated {s.get('vote_average',0)}/10. "
-            return reply.strip()
-
-        return None
-
-    except requests.exceptions.Timeout:
-        return "Sorry, the movie service took too long to respond."
-    except Exception as e:
-        print(f"[TMDB Error] {type(e).__name__}: {e}")
-        return "Sorry, I couldn't fetch movie info right now."
-
-
-# ==================================================
-# DATE & TIME
-# ==================================================
-DATETIME_TRIGGERS = ["what time", "what's the time", "current time",
-                     "what day", "what's today", "today's date",
-                     "what date", "current date", "what year", "what month"]
-
-def get_datetime(cmd):
-    now = datetime.now()
-    if any(t in cmd for t in ["time", "clock"]):
-        return f"The current time is {now.strftime('%I:%M %p')}."
-    if any(t in cmd for t in ["date", "today", "day", "month", "year"]):
-        return f"Today is {now.strftime('%A, %B %d, %Y')}."
-    return f"It is {now.strftime('%A, %B %d, %Y')} and the time is {now.strftime('%I:%M %p')}."
-
-
-# ==================================================
-# CALCULATOR
-# ==================================================
-CALC_TRIGGERS = ["calculate", "what is", "compute", "how much is",
-                 "what's", "solve", "math"]
-
-# Safe math symbols allowed in eval
-_SAFE_NAMES = {k: v for k, v in math.__dict__.items() if not k.startswith("_")}
-_SAFE_NAMES.update({"abs": abs, "round": round})
-
-def safe_eval(expr):
-    """Evaluate a math expression safely."""
-    # Only allow numbers and basic operators
-    cleaned = re.sub(r"[^0-9+\-*/().%^ ]", "", expr).strip()
-    cleaned = cleaned.replace("^", "**")  # support ^ for power
-    if not cleaned:
-        return None
-    try:
-        result = eval(cleaned, {"__builtins__": {}}, _SAFE_NAMES)
-        return result
-    except Exception:
-        return None
-
-def get_calculation(cmd):
-    # Strip trigger words to get the expression
-    expr = cmd
-    for trigger in ["calculate ", "compute ", "what is ", "how much is ",
-                    "what's ", "solve ", "math "]:
-        if trigger in expr:
-            expr = expr.split(trigger, 1)[1].strip()
-            break
-
-    # Check if it looks like a math expression
-    if not re.search(r"[\d]", expr):
-        return None
-
-    result = safe_eval(expr)
-    if result is None:
-        return None
-
-    # Clean up result display
-    if isinstance(result, float) and result.is_integer():
-        result = int(result)
-
-    return f"The answer is {result}."
-
-
-# ==================================================
 # MAIN ACTION HANDLER
 # ==================================================
 def perform_action(command):
-    """
-    Check if command matches known actions.
-    Returns confirmation string if handled, None if not.
-    """
     cmd = command.lower().strip()
 
-    # ─────────────────────────────────────────
-    # DATE & TIME (checked first — before calculator/wiki)
-    # ─────────────────────────────────────────
-    if any(t in cmd for t in DATETIME_TRIGGERS) and any(
-        w in cmd for w in ["time", "date", "day", "today", "year", "month", "clock"]
-    ):
-        return get_datetime(cmd)
-
-    # ─────────────────────────────────────────
-    # CALCULATOR
-    # ─────────────────────────────────────────
-    if any(t in cmd for t in CALC_TRIGGERS):
-        result = get_calculation(cmd)
-        if result:
-            return result
-
-    # ─────────────────────────────────────────
     # WEATHER
-    # ─────────────────────────────────────────
     if any(t in cmd for t in WEATHER_TRIGGERS):
         return get_weather(cmd)
 
-    # ─────────────────────────────────────────
     # NEWS
-    # ─────────────────────────────────────────
     if any(t in cmd for t in NEWS_TRIGGERS):
         return get_news(cmd)
 
-    # ─────────────────────────────────────────
-    # TMDB — MOVIES & TV
-    # ─────────────────────────────────────────
-    if any(t in cmd for t in TMDB_TRIGGERS):
-        result = get_tmdb(cmd)
-        if result:
-            return result
-
-    # ─────────────────────────────────────────
     # PERSONAL MEMORY
-    # ─────────────────────────────────────────
     if cmd.startswith("remember "):
         text = cmd.replace("remember", "", 1).strip()
         if " is " in text:
@@ -373,10 +169,6 @@ def perform_action(command):
         memory = get_personal_memory(key)
         if memory:
             return f"{key} is {memory}"
-        # Fall through to Wikipedia
-        result = get_wikipedia(cmd)
-        if result:
-            return result
 
     if "what do you know about me" in cmd or "show personal memory" in cmd:
         memories = get_all_memory()
@@ -387,23 +179,13 @@ def perform_action(command):
             result += f"{key} is {value}. "
         return result
 
-    # ─────────────────────────────────────────
-    # WIKIPEDIA
-    # ─────────────────────────────────────────
-    if any(t in cmd for t in ["tell me about ", "wikipedia ", "wiki "]):
-        return get_wikipedia(cmd)
-
-    # ─────────────────────────────────────────
     # YOUTUBE
-    # ─────────────────────────────────────────
     if cmd.startswith("play "):
         search = cmd.replace("play", "", 1).strip()
         webbrowser.open("https://www.youtube.com/results?search_query=" + quote(search))
         return f"Playing {search} on YouTube"
 
-    # ─────────────────────────────────────────
     # OPEN WEBSITES
-    # ─────────────────────────────────────────
     sites = {
         "open youtube":   "https://youtube.com",
         "open google":    "https://google.com",
@@ -426,18 +208,13 @@ def perform_action(command):
         webbrowser.open("https://www.google.com/search?q=" + quote(query))
         return f"Searching Google for {query}"
 
-    # ─────────────────────────────────────────
-    # SCREEN VISION (server-safe)
-    # ─────────────────────────────────────────
+    # SCREEN VISION
     if "what is on my screen" in cmd or "read screen" in cmd:
         return read_screen_text()
-
     if "read this error" in cmd or "check error" in cmd:
         return detect_error()
 
-    # ─────────────────────────────────────────
-    # DESKTOP ACTIONS (local only — no-ops on server)
-    # ─────────────────────────────────────────
+    # DESKTOP ACTIONS
     if "open chrome" in cmd:
         return "Opening Chrome is only available when running locally."
     if "open vs code" in cmd or "open vscode" in cmd:
