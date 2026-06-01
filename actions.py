@@ -1,5 +1,6 @@
 import os
 import sys
+import requests
 import webbrowser
 from urllib.parse import quote
 from memory import (
@@ -20,6 +21,12 @@ except Exception:
     def detect_error():
         return "Screen error detection is not available in server mode."
 
+# ==================================================
+# API KEYS (from environment — never hardcoded)
+# ==================================================
+WEATHER_KEY = os.getenv("WEATHER_KEY")
+NEWS_KEY = os.getenv("NEWS_KEY")
+
 
 def _open_app(win_cmd, mac_cmd, linux_cmd):
     """Open native app cross-platform."""
@@ -31,6 +38,138 @@ def _open_app(win_cmd, mac_cmd, linux_cmd):
         os.system(linux_cmd)
 
 
+# ==================================================
+# WEATHER
+# ==================================================
+WEATHER_TRIGGERS = ["weather", "temperature", "how hot", "how cold", "forecast"]
+
+def get_weather(cmd):
+    if not WEATHER_KEY:
+        return "Weather is not available. The API key is missing."
+
+    # Extract city from command
+    # e.g. "weather in London", "weather London", "temperature in Paris"
+    city = None
+    for trigger in ["weather in ", "weather for ", "temperature in ", "forecast for ", "forecast in "]:
+        if trigger in cmd:
+            city = cmd.split(trigger, 1)[1].strip()
+            break
+    if not city:
+        for trigger in ["weather ", "temperature ", "forecast "]:
+            if cmd.startswith(trigger):
+                city = cmd.replace(trigger, "", 1).strip()
+                break
+    if not city:
+        return "Please say which city you want the weather for. For example: weather in London."
+
+    try:
+        response = requests.get(
+            "https://api.openweathermap.org/data/2.5/weather",
+            params={
+                "q": city,
+                "appid": WEATHER_KEY,
+                "units": "metric"
+            },
+            timeout=10
+        )
+        data = response.json()
+
+        if response.status_code != 200:
+            msg = data.get("message", "Unknown error")
+            return f"Sorry, I couldn't get the weather for {city}. {msg}."
+
+        name = data["name"]
+        country = data["sys"]["country"]
+        temp = round(data["main"]["temp"])
+        feels = round(data["main"]["feels_like"])
+        desc = data["weather"][0]["description"].capitalize()
+        humidity = data["main"]["humidity"]
+
+        return (
+            f"The weather in {name}, {country} is {desc}. "
+            f"It is {temp}°C and feels like {feels}°C. "
+            f"Humidity is {humidity}%."
+        )
+
+    except requests.exceptions.Timeout:
+        return "Sorry, the weather service took too long to respond."
+    except Exception as e:
+        print(f"[Weather Error] {type(e).__name__}: {e}")
+        return "Sorry, I couldn't fetch the weather right now."
+
+
+# ==================================================
+# NEWS
+# ==================================================
+NEWS_TRIGGERS = ["news", "headlines", "what's happening", "latest news"]
+
+def get_news(cmd):
+    if not NEWS_KEY:
+        return "News is not available. The API key is missing."
+
+    # Extract topic if mentioned
+    # e.g. "news about technology", "latest news on sports"
+    topic = None
+    for trigger in ["news about ", "news on ", "headlines about ", "headlines on ", "latest news on ", "latest news about "]:
+        if trigger in cmd:
+            topic = cmd.split(trigger, 1)[1].strip()
+            break
+
+    try:
+        if topic:
+            response = requests.get(
+                "https://newsapi.org/v2/everything",
+                params={
+                    "q": topic,
+                    "apiKey": NEWS_KEY,
+                    "pageSize": 3,
+                    "sortBy": "publishedAt",
+                    "language": "en"
+                },
+                timeout=10
+            )
+        else:
+            response = requests.get(
+                "https://newsapi.org/v2/top-headlines",
+                params={
+                    "apiKey": NEWS_KEY,
+                    "pageSize": 3,
+                    "language": "en",
+                    "country": "us"
+                },
+                timeout=10
+            )
+
+        data = response.json()
+
+        if response.status_code != 200 or data.get("status") != "ok":
+            msg = data.get("message", "Unknown error")
+            return f"Sorry, I couldn't get the news. {msg}."
+
+        articles = data.get("articles", [])
+        if not articles:
+            return "I couldn't find any news articles right now."
+
+        label = f"top news about {topic}" if topic else "top headlines"
+        result = f"Here are the {label}. "
+        for i, article in enumerate(articles[:3], 1):
+            title = article.get("title", "No title")
+            # Strip source tag often appended like " - BBC News"
+            if " - " in title:
+                title = title.rsplit(" - ", 1)[0].strip()
+            result += f"{i}. {title}. "
+        return result.strip()
+
+    except requests.exceptions.Timeout:
+        return "Sorry, the news service took too long to respond."
+    except Exception as e:
+        print(f"[News Error] {type(e).__name__}: {e}")
+        return "Sorry, I couldn't fetch the news right now."
+
+
+# ==================================================
+# MAIN ACTION HANDLER
+# ==================================================
 def perform_action(command):
     """
     Check if command matches known actions.
@@ -39,9 +178,20 @@ def perform_action(command):
     cmd = command.lower().strip()
 
     # ─────────────────────────────────────────
+    # WEATHER
+    # ─────────────────────────────────────────
+    if any(t in cmd for t in WEATHER_TRIGGERS):
+        return get_weather(cmd)
+
+    # ─────────────────────────────────────────
+    # NEWS
+    # ─────────────────────────────────────────
+    if any(t in cmd for t in NEWS_TRIGGERS):
+        return get_news(cmd)
+
+    # ─────────────────────────────────────────
     # PERSONAL MEMORY
     # ─────────────────────────────────────────
-
     if cmd.startswith("remember "):
         text = cmd.replace("remember", "", 1).strip()
         if " is " in text:
@@ -70,7 +220,6 @@ def perform_action(command):
     # ─────────────────────────────────────────
     # YOUTUBE
     # ─────────────────────────────────────────
-
     if cmd.startswith("play "):
         search = cmd.replace("play", "", 1).strip()
         webbrowser.open(
@@ -81,7 +230,6 @@ def perform_action(command):
     # ─────────────────────────────────────────
     # OPEN WEBSITES
     # ─────────────────────────────────────────
-
     sites = {
         "open youtube":    "https://youtube.com",
         "open google":     "https://google.com",
@@ -110,7 +258,6 @@ def perform_action(command):
     # ─────────────────────────────────────────
     # SCREEN VISION (server-safe)
     # ─────────────────────────────────────────
-
     if "what is on my screen" in cmd or "read screen" in cmd:
         return read_screen_text()
 
@@ -120,7 +267,6 @@ def perform_action(command):
     # ─────────────────────────────────────────
     # DESKTOP ACTIONS (local only — no-ops on server)
     # ─────────────────────────────────────────
-
     if "open chrome" in cmd:
         return "Opening Chrome is only available when running locally."
 
